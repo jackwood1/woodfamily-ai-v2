@@ -8,11 +8,12 @@
 
 ## COMMUNICATIONS Agent (`shared/communications_agent.py`)
 
-Unified interface for email and SMS:
+Unified interface for email and SMS. **Runs regularly** (every 60 min) to scan inbox and feed other agents:
 
 - **Email (Gmail)** – send_email, read_emails, get_email, archive_email, trash_email. Requires gmail.modify scope for archive/trash; reconnect Google after adding.
 - **SMS (Twilio)** – send_sms when TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_PHONE_NUMBER are set.
 - **Woody tools** – communications_send (email|sms), communications_read, communications_get_email, communications_archive_email, communications_trash_email.
+- **Inbox scan loop** – Reads inbox, passes correspondent emails to CONTACT agent (circle inference), passes potential events (reminders, TODOs, meetings, dates) to EVENTS agent. Proposals appear in Memory Agent panel; user approves.
 
 ## CONTACT Agent (`shared/contact_agent.py`)
 
@@ -33,6 +34,11 @@ Manages calendar events, TODOs, and wishlists:
 - **Events → memories** – `propose_events_for_memory()` creates memory proposals for recent events; user approves via Memory Agent UI.
 - **Nightly** – Runs as part of Memory Agent (which calls `propose_events_for_memory()`). Dashboard "Run EVENTS" triggers events→memory only.
 - **Scheduled templates** – Recurring items (bills, car inspections, birthdays). EVENTS agent loop runs every 6h (configurable via `EVENTS_AGENT_INTERVAL_MINUTES`), creates events when due, surfaces "Requires Scheduling" for items due within 14 days. Included in daily reminder digest.
+
+## About Me
+
+- **Storage**: Dashboard DB `about_me` table. Injected into Woody system prompt.
+- **Import**: Settings → About Me. Upload LinkedIn or Facebook data export ZIP (request at each platform's Settings → Data Privacy → Get a copy of your data). Parsers in `shared/import_archives.py`.
 
 ## Key Paths
 

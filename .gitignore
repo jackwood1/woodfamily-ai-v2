@@ -1,6 +1,9 @@
 __pycache__/
 *.pyc
 .env
+.google_tokens.json
+.yahoo_tokens.json
+chroma_db/
 .venv/
 venv/
 node_modules/

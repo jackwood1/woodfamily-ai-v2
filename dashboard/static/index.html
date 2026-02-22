@@ -1,0 +1,333 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Woody Dashboard</title>
+  <link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
+  <link rel="apple-touch-icon" href="/static/icon-192.png">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,500;0,9..40,600;1,9..40,400&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+  <header class="header">
+    <h1>Woody Dashboard</h1>
+    <p class="tagline">Events, decisions & notes</p>
+    <nav class="tabs" role="tablist">
+      <button class="tab active" data-tab="overview" role="tab">Overview</button>
+      <button class="tab" data-tab="people" role="tab">People</button>
+      <button class="tab" data-tab="content" role="tab">Content</button>
+      <button class="tab" data-tab="ai" role="tab">AI<span class="tab-badge" id="tab-ai-badge" hidden></span></button>
+      <button class="tab" data-tab="settings" role="tab">Settings</button>
+    </nav>
+  </header>
+
+  <div class="chat-top-wrapper">
+    <section class="panel chat-panel">
+      <div class="panel-header">
+        <h2>Chat</h2>
+      </div>
+      <p class="item-desc">Ask Woody to manage events, memories, circles, and more.</p>
+      <div class="pending-approvals" id="pending-approvals" hidden>
+        <div class="approvals-header">
+          <h3 class="approvals-heading">Pending approvals (expire in 24h)</h3>
+          <div class="approvals-batch">
+            <button class="btn btn-add btn-approve-all" id="btn-approve-all">Approve all</button>
+            <button class="btn btn-danger btn-reject-all" id="btn-reject-all">Reject all</button>
+          </div>
+        </div>
+        <ul class="list list-approvals" id="list-approvals"></ul>
+      </div>
+      <div class="chat-messages" id="chat-messages"></div>
+      <div class="chat-approve" id="chat-approve" hidden>
+        <button class="btn btn-primary" id="btn-chat-approve">Approve</button>
+        <span id="chat-approve-id"></span>
+      </div>
+      <form class="chat-form" id="form-chat">
+        <input type="text" id="chat-input" placeholder="Type a message…" autocomplete="off">
+        <button type="submit" class="btn btn-primary">Send</button>
+      </form>
+    </section>
+  </div>
+
+  <main class="main">
+    <div class="tab-content active" id="tab-overview">
+    <section class="panel events-panel">
+      <div class="panel-header">
+        <h2>Coming events</h2>
+        <button class="btn btn-add" data-add="event">+ Add</button>
+      </div>
+      <form class="form add-form" id="form-event" hidden>
+        <input type="date" name="date" required>
+        <input type="text" name="title" placeholder="Title" required>
+        <textarea name="description" placeholder="Description" rows="2"></textarea>
+        <select name="event_type">
+          <option value="event">Event</option>
+          <option value="milestone">Milestone</option>
+          <option value="reminder">Reminder</option>
+        </select>
+        <select name="recurrence">
+          <option value="">One-time</option>
+          <option value="FREQ=DAILY">Daily</option>
+          <option value="FREQ=WEEKLY;BYDAY=MO">Weekly (Mon)</option>
+          <option value="FREQ=WEEKLY">Weekly (same day)</option>
+          <option value="FREQ=MONTHLY">Monthly</option>
+          <option value="FREQ=YEARLY">Yearly</option>
+        </select>
+        <div class="form-actions">
+          <button type="submit" class="btn btn-primary">Save</button>
+          <button type="button" class="btn btn-cancel" data-cancel="event">Cancel</button>
+        </div>
+      </form>
+      <ul class="list" id="list-events"></ul>
+      <div id="event-duplicates" class="event-duplicates" hidden>
+        <h3>Possible duplicates</h3>
+        <p class="item-desc">Events with same date and similar title. Merge to keep one and remove the rest.</p>
+        <ul class="list" id="list-duplicates"></ul>
+      </div>
+      <div id="requires-scheduling" class="requires-scheduling" hidden>
+        <h3>Requires scheduling</h3>
+        <p class="item-desc">Recurring items due soon (bills, inspections, birthdays). EVENTS agent creates events when due.</p>
+        <ul class="list" id="list-requires-scheduling"></ul>
+      </div>
+    </section>
+
+    <section class="panel scheduled-templates-panel">
+      <div class="panel-header">
+        <h2>Scheduled templates</h2>
+        <button class="btn btn-add" data-add="scheduled-template">+ Add</button>
+      </div>
+      <p class="item-desc">Recurring items: bills, car inspections, birthdays. Use YEARLY, MONTHLY, or WEEKLY. Anchor date = last occurrence.</p>
+      <form class="form add-form" id="form-scheduled-template" hidden>
+        <input type="text" name="title" placeholder="e.g. Car inspection, Electric bill" required>
+        <textarea name="description" placeholder="Description (optional)" rows="2"></textarea>
+        <select name="recurrence" required>
+          <option value="YEARLY">Yearly</option>
+          <option value="MONTHLY">Monthly</option>
+          <option value="WEEKLY">Weekly</option>
+        </select>
+        <input type="date" name="anchor_date" placeholder="Last occurrence (yyyy-mm-dd)" required>
+        <div class="form-actions">
+          <button type="submit" class="btn btn-primary">Add</button>
+          <button type="button" class="btn btn-cancel" data-cancel="scheduled-template">Cancel</button>
+        </div>
+      </form>
+      <ul class="list" id="list-scheduled-templates"></ul>
+    </section>
+    </div>
+
+    <div class="tab-content" id="tab-people">
+    <section class="panel contacts-panel">
+      <div class="panel-header">
+        <h2>Contacts</h2>
+        <div class="panel-actions">
+          <button class="btn btn-add" data-add="contact">+ Add</button>
+          <button class="btn btn-add btn-secondary" id="btn-import-google" title="Sync from Google Contacts">Import Google</button>
+          <label class="btn btn-add btn-secondary" for="vcard-file-input" title="Import from vCard (iPhone export)">Import vCard</label>
+          <input type="file" id="vcard-file-input" accept=".vcf,.vcard" hidden>
+        </div>
+      </div>
+      <p class="item-desc">CONTACT agent syncs from Google every 24h. Export iPhone contacts from iCloud.com → Export vCard.</p>
+      <form class="form add-form" id="form-contact" hidden>
+        <input type="text" name="name" placeholder="Name" required>
+        <input type="email" name="email" placeholder="Email">
+        <input type="text" name="phone" placeholder="Phone">
+        <textarea name="notes" placeholder="Notes" rows="2"></textarea>
+        <div class="form-actions">
+          <button type="submit" class="btn btn-primary">Save</button>
+          <button type="button" class="btn btn-cancel" data-cancel="contact">Cancel</button>
+        </div>
+      </form>
+      <div class="contacts-list-wrapper">
+        <div class="contacts-list-header">
+          <input type="text" id="contacts-search" class="form-input contacts-search" placeholder="Search contacts…" autocomplete="off">
+          <button type="button" class="btn btn-add btn-collapse" id="btn-contacts-collapse" title="Expand/collapse list">
+            <span id="contacts-collapse-icon">▶</span>
+            <span id="contacts-count">0 contacts</span>
+          </button>
+        </div>
+        <div class="contacts-list-body collapsed" id="contacts-list-body">
+          <ul class="list" id="list-contacts"></ul>
+        </div>
+      </div>
+    </section>
+
+    <section class="panel places-panel">
+      <div class="panel-header">
+        <h2>Places</h2>
+        <button class="btn btn-add" data-add="place">+ Add</button>
+      </div>
+      <form class="form add-form" id="form-place" hidden>
+        <input type="text" name="name" placeholder="Name" required>
+        <input type="text" name="address" placeholder="Address">
+        <textarea name="notes" placeholder="Notes" rows="2"></textarea>
+        <div class="form-actions">
+          <button type="submit" class="btn btn-primary">Save</button>
+          <button type="button" class="btn btn-cancel" data-cancel="place">Cancel</button>
+        </div>
+      </form>
+      <ul class="list" id="list-places"></ul>
+    </section>
+
+    <section class="panel circles-panel">
+      <div class="panel-header">
+        <h2>Circles</h2>
+        <button class="btn btn-add" data-add="circle">+ Add</button>
+      </div>
+      <p class="item-desc">Connect people, places & memories. Create a circle, then add members.</p>
+      <form class="form add-form" id="form-circle" hidden>
+        <input type="text" name="name" placeholder="Circle name (e.g. Family)" required>
+        <textarea name="description" placeholder="Description" rows="2"></textarea>
+        <div class="form-actions">
+          <button type="submit" class="btn btn-primary">Save</button>
+          <button type="button" class="btn btn-cancel" data-cancel="circle">Cancel</button>
+        </div>
+      </form>
+      <ul class="list" id="list-circles"></ul>
+    </section>
+    </div>
+
+    <div class="tab-content" id="tab-content">
+    <section class="panel decisions-panel">
+      <div class="panel-header">
+        <h2>Decisions</h2>
+        <button class="btn btn-add" data-add="decision">+ Add</button>
+      </div>
+      <form class="form add-form" id="form-decision" hidden>
+        <input type="date" name="date" required>
+        <input type="text" name="decision" placeholder="What was decided?" required>
+        <textarea name="context" placeholder="Context / why" rows="2"></textarea>
+        <textarea name="outcome" placeholder="Outcome (optional)" rows="2"></textarea>
+        <div class="form-actions">
+          <button type="submit" class="btn btn-primary">Save</button>
+          <button type="button" class="btn btn-cancel" data-cancel="decision">Cancel</button>
+        </div>
+      </form>
+      <ul class="list" id="list-decisions"></ul>
+    </section>
+
+    <section class="panel notes-panel">
+      <div class="panel-header">
+        <h2>Notes</h2>
+        <button class="btn btn-add" data-add="note">+ Add</button>
+      </div>
+      <form class="form add-form" id="form-note" hidden>
+        <input type="text" name="title" placeholder="Title" required>
+        <textarea name="content" placeholder="Content" rows="4"></textarea>
+        <input type="text" name="tags" placeholder="Tags (comma-separated)">
+        <div class="form-actions">
+          <button type="submit" class="btn btn-primary">Save</button>
+          <button type="button" class="btn btn-cancel" data-cancel="note">Cancel</button>
+        </div>
+      </form>
+      <ul class="list" id="list-notes"></ul>
+    </section>
+
+    <section class="panel wishlist-panel">
+      <div class="panel-header">
+        <h2>Wishlist</h2>
+        <button class="btn btn-add" data-add="wishlist">+ Add</button>
+      </div>
+      <p class="item-desc">Things you want but may never get. Unlike TODOs, no due date or completion.</p>
+      <form class="form add-form" id="form-wishlist" hidden>
+        <input type="text" name="content" placeholder="e.g. Trip to Japan, Learn piano" required>
+        <div class="form-actions">
+          <button type="submit" class="btn btn-primary">Add</button>
+          <button type="button" class="btn btn-cancel" data-cancel="wishlist">Cancel</button>
+        </div>
+      </form>
+      <ul class="list" id="list-wishlist"></ul>
+    </section>
+    </div>
+
+    <div class="tab-content" id="tab-ai">
+    <section class="panel memories-panel">
+      <div class="panel-header">
+        <h2>Memories</h2>
+        <button class="btn btn-add" data-add="memory">+ Add</button>
+      </div>
+      <input type="text" id="memory-search" class="form-input" placeholder="Search memories…" style="margin-bottom: 0.5rem;">
+      <form class="form add-form" id="form-memory" hidden>
+        <textarea name="fact" placeholder="Enter a fact to remember (e.g. 'My birthday is March 15')" rows="3" required></textarea>
+        <div class="form-actions">
+          <button type="submit" class="btn btn-primary">Save</button>
+          <button type="button" class="btn btn-cancel" data-cancel="memory">Cancel</button>
+        </div>
+      </form>
+      <ul class="list" id="list-memories"></ul>
+    </section>
+
+    <section class="panel memory-agent-panel">
+      <div class="panel-header">
+        <h2>Memory Agent</h2>
+        <button class="btn btn-add" id="btn-memory-agent-run">Run now</button>
+        <button class="btn btn-add" id="btn-events-agent-run" title="Propose event→memories only">Run EVENTS</button>
+      </div>
+      <p class="item-desc">Runs nightly. Proposes adds, removals, event→memories, consolidations. Approve to train the agent before changes commit.</p>
+      <div class="memory-agent-proposals" id="memory-agent-proposals" hidden>
+        <div class="approvals-header">
+          <h3 class="approvals-heading">Pending proposals</h3>
+          <div class="approvals-batch">
+            <button class="btn btn-add btn-proposals-approve-all" id="btn-proposals-approve-all">Approve all</button>
+            <button class="btn btn-danger btn-proposals-reject-all" id="btn-proposals-reject-all">Reject all</button>
+          </div>
+        </div>
+        <ul class="list list-memory-agent" id="list-memory-agent"></ul>
+      </div>
+    </section>
+    </div>
+
+    <div class="tab-content" id="tab-settings">
+    <section class="panel about-me-panel">
+      <div class="panel-header">
+        <h2>About Me</h2>
+        <button class="btn btn-primary" id="btn-about-me-save">Save</button>
+      </div>
+      <p class="item-desc">Preferences and context for Woody (work hours, family, etc.). Helps the agent make better decisions.</p>
+      <div class="about-me-import">
+        <p class="item-meta">Import from data export: LinkedIn and Facebook let you download your data. Upload the ZIP here to extract profile/work/education.</p>
+        <div class="about-me-import-buttons">
+          <label class="btn btn-add">
+            <input type="file" id="about-me-linkedin-file" accept=".zip" hidden>
+            Import from LinkedIn
+          </label>
+          <label class="btn btn-add">
+            <input type="file" id="about-me-facebook-file" accept=".zip" hidden>
+            Import from Facebook
+          </label>
+        </div>
+      </div>
+      <textarea id="about-me-content" class="about-me-textarea" rows="8" placeholder="e.g. Work 9–5 weekdays. Family: Jane, Bob. Prefer morning meetings."></textarea>
+    </section>
+
+    <section class="panel integrations-panel">
+      <div class="panel-header">
+        <h2>Integrations</h2>
+      </div>
+      <p class="item-desc">Connect Google for Gmail & Calendar, or Yahoo for Mail. COMMUNICATIONS agent scans inbox hourly.</p>
+      <button id="btn-run-communications" class="btn btn-add" style="margin-bottom: 0.5rem;">Run Communications</button>
+      <div id="google-status" class="integration-status">
+        <span class="status-loading">Checking…</span>
+      </div>
+      <button id="btn-disconnect-google" class="btn btn-danger" style="margin-top: 0.5rem; display: none;">Disconnect Google</button>
+      <div id="yahoo-status" class="integration-status" style="margin-top: 1rem;">
+        <span class="status-loading">Checking…</span>
+      </div>
+      <button id="btn-disconnect-yahoo" class="btn btn-danger" style="margin-top: 0.5rem; display: none;">Disconnect Yahoo</button>
+    </section>
+
+    <section class="panel otel-panel">
+      <div class="panel-header">
+        <h2>Otel Traces</h2>
+        <button class="btn btn-add" id="btn-refresh-otel">↻ Refresh</button>
+      </div>
+      <ul class="list list-otel" id="list-otel"></ul>
+    </section>
+    </div>
+  </main>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>

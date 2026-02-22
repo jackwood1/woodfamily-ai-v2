@@ -1,0 +1,60 @@
+# Production Docker Compose for AWS (EC2)
+# Usage: docker compose -f docker-compose.prod.yml up -d
+#
+# Prerequisites: Create .env from .env.example with production values.
+# OAuth: Set GOOGLE_REDIRECT_URI and YAHOO_REDIRECT_URI to https://your-domain/...
+# Run behind Nginx/Caddy for HTTPS.
+#
+# Data: Single volume at /data for SQLite, ChromaDB, OAuth tokens.
+# First run: Copy .google_tokens.json and .yahoo_tokens.json into volume if migrating.
+
+version: "3.8"
+
+services:
+  woody:
+    build: .
+    env_file: .env
+    environment:
+      - PYTHONPATH=/app
+      - DASHBOARD_URL=http://dashboard:8000
+      - WOODY_DB_PATH=/data/woody/app.db
+      - DASHBOARD_DB_PATH=/data/dashboard/dashboard.db
+      - MEMORY_DB_PATH=/data/chroma_db
+      - GOOGLE_TOKENS_PATH=/data/.google_tokens.json
+      - YAHOO_TOKENS_PATH=/data/.yahoo_tokens.json
+    volumes:
+      - app_data:/data
+    working_dir: /app
+    command: python woody/run.py
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:9000/health')"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  dashboard:
+    build: .
+    env_file: .env
+    ports:
+      - "8000:8000"
+    environment:
+      - PYTHONPATH=/app
+      - DASHBOARD_DB_PATH=/data/dashboard/dashboard.db
+      - WOODY_DB_PATH=/data/woody/app.db
+      - MEMORY_DB_PATH=/data/chroma_db
+      - GOOGLE_TOKENS_PATH=/data/.google_tokens.json
+      - YAHOO_TOKENS_PATH=/data/.yahoo_tokens.json
+    volumes:
+      - app_data:/data
+    working_dir: /app
+    command: uvicorn dashboard.app.main:app --host 0.0.0.0 --port 8000
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+volumes:
+  app_data:

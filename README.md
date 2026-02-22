@@ -39,9 +39,14 @@ Tests cover the shared agents (events, contact, communications, memory), approva
 docker-compose up
 ```
 
+## Deployment
+
+See **[deploy/DEPLOY.md](deploy/DEPLOY.md)** for AWS deployment (EC2 + Docker Compose or ECS).
+
 ## Integrations
 
-- **Google (Gmail, Calendar, Contacts)**: Visit `http://localhost:8000/api/integrations/google/authorize` to connect. Enable **People API** for contact sync. Reconnect after adding to grant gmail.modify (archive/trash).
+- **Google (Gmail, Calendar, Contacts)**: Visit `http://localhost:8000/api/integrations/google/authorize` to connect. Enable **People API** for contact sync. Reconnect after adding to grant gmail.modify (archive/trash). For production, set `GOOGLE_REDIRECT_URI=https://your-domain/api/integrations/google/callback`.
+- **Yahoo Mail**: Create an app at [developer.yahoo.com](https://developer.yahoo.com/apps/), add `YAHOO_CLIENT_ID`, `YAHOO_CLIENT_SECRET`, and `YAHOO_REDIRECT_URI` to `.env`. Local: `https://localhost:8443/api/integrations/yahoo/callback`. Production: `https://your-domain/api/integrations/yahoo/callback`.
 - **GitHub**: Set `GITHUB_TOKEN` in `.env`
 
 ## Optional env vars
@@ -54,6 +59,7 @@ docker-compose up
 - `DASHBOARD_URL` – Dashboard API URL for Woody reminders (default: http://localhost:8000; use http://dashboard:8000 in Docker)
 - `CALENDAR_TIMEZONE` – IANA timezone for calendar events (default: UTC). **Set this to your timezone** (e.g. America/Los_Angeles, America/New_York) or events may appear at the wrong time.
 - `CONTACT_AGENT_INTERVAL_MINUTES` – How often to sync contacts from Google (default: 1440 = 24h).
+- `COMMUNICATIONS_AGENT_INTERVAL_MINUTES` – How often to scan inbox and feed contacts/events agents (default: 60).
 - `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, `TWILIO_PHONE_NUMBER` – For SMS via COMMUNICATIONS agent (optional).
 - `WOODY_DB_PATH` – Path to Woody's SQLite DB (default: woody/app.db). Dashboard chat uses this for conversation & approvals.
 - `DASHBOARD_DB_PATH` – Path to dashboard SQLite DB (default: dashboard/dashboard.db). Override in tests via `monkeypatch.setenv`.
