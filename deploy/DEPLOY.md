@@ -2,6 +2,10 @@
 
 Deploy Woody (Telegram bot) + Dashboard to AWS. Two main options:
 
+**Deploy Agent**: After merging to `main`, the [Deploy workflow](../.github/DEPLOY-AGENT.md) can automatically deploy to EC2. See `.github/DEPLOY-AGENT.md` for setup.
+
+**First-time AWS setup**: See [deploy/aws/SETUP.md](aws/SETUP.md) for a step-by-step guide to create EC2, bootstrap, and connect the deploy workflow.
+
 1. **EC2 + Docker Compose** (recommended for getting started)
 2. **ECS Fargate** (scalable, no server management)
 

@@ -1,0 +1,46 @@
+# Deploy Agent – runs after merge to main
+# SSHs to EC2 and runs git pull + docker compose up
+#
+# Required secrets:
+#   DEPLOY_HOST     – EC2 hostname or IP
+#   DEPLOY_USER     – SSH user (e.g. ec2-user, ubuntu)
+#   DEPLOY_SSH_KEY  – Private SSH key for EC2
+# Optional:
+#   DEPLOY_REPO_PATH – Repo path on server (default: ~/woodfamily-ai-v2)
+
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - "**.md"
+      - ".github/**"
+      - "docs/**"
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Deploy to EC2
+        uses: appleboy/ssh-action@v1.0.3
+        env:
+          DEPLOY_REPO_PATH: ${{ secrets.DEPLOY_REPO_PATH }}
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          username: ${{ secrets.DEPLOY_USER }}
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
+          envs: DEPLOY_REPO_PATH
+          script: |
+            set -e
+            REPO_PATH="${DEPLOY_REPO_PATH:-$HOME/woodfamily-ai-v2}"
+            cd "$REPO_PATH" || { echo "Repo not found at $REPO_PATH"; exit 1; }
+            git fetch origin
+            git checkout main
+            git pull origin main
+            docker compose -f docker-compose.prod.yml build --quiet
+            docker compose -f docker-compose.prod.yml up -d
+            echo "Deploy complete."
+            sleep 5
+            curl -sf http://localhost:8000/health && echo " Dashboard OK" || true
+            curl -sf http://localhost:9000/health && echo " Woody OK" || true

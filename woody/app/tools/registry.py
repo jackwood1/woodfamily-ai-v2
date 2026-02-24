@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import inspect
 from enum import Enum
 from typing import Any, Callable
 
@@ -71,4 +72,8 @@ def execute_tool(name: str, args: dict[str, Any], **kwargs: Any) -> Any:
         raise ValueError(f"Unknown tool: {name}")
     if tool.tier == PermissionTier.RED:
         raise ValueError(f"Tool {name} is disabled")
-    return tool.handler(**args, **kwargs)
+    # Filter to only params the handler accepts (avoids db_path, etc. from approval records or model hallucination)
+    sig = inspect.signature(tool.handler)
+    allowed = {p for p in sig.parameters if p != "self"}
+    filtered = {k: v for k, v in {**args, **kwargs}.items() if k in allowed}
+    return tool.handler(**filtered)
