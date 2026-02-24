@@ -64,11 +64,11 @@ def _comms_trash_handler(message_id: str) -> str:
 register(
     ToolDef(
         name="communications_send",
-        description="Send email or SMS. Use channel 'email' or 'sms'. For email: provide to, subject, body. For SMS: provide to and body (subject ignored).",
+        description="Send email or SMS immediately. Use channel 'email' or 'sms'. For email: provide to, subject, body. For SMS: provide to and body (subject ignored). Executes directly when called.",
         parameters={
             "properties": {
                 "channel": {"type": "string", "description": "email or sms"},
-                "to": {"type": "string", "description": "Email address or phone number (e.g. +1234567890)"},
+                "to": {"type": "string", "description": "Email address or phone in E.164 (e.g. +14155551234 for US). Must start with + and country code."},
                 "subject": {"type": "string", "description": "Subject (email only)"},
                 "body": {"type": "string", "description": "Message body"},
             },

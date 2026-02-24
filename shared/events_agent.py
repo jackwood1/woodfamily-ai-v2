@@ -21,8 +21,8 @@ def _get_dashboard_db_path() -> Path:
 
 
 def _get_woody_db_path() -> Path:
-    default = Path(__file__).resolve().parent.parent / "woody" / "app.db"
-    return Path(os.environ.get("WOODY_DB_PATH", str(default)))
+    from shared.db_path import get_woody_db_path
+    return get_woody_db_path()
 
 
 def _get_conn(db_path: Path):

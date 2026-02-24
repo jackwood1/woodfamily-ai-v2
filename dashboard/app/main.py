@@ -1,5 +1,6 @@
 """Dashboard API."""
 
+import logging
 import sys
 from pathlib import Path
 from typing import Optional
@@ -7,6 +8,10 @@ from typing import Optional
 # Add repo root for otel_setup and shared
 _root = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(_root))
+
+# Configure logging to file + console
+from shared.logging_config import setup_logging
+setup_logging(service="dashboard", log_dir=_root / "logs")
 
 # Load .env from repo root
 from dotenv import load_dotenv
@@ -32,34 +37,68 @@ from .db import get_conn, init_db
 
 app = FastAPI(title="Woody Dashboard")
 
-# Optional Basic Auth (set DASHBOARD_USER and DASHBOARD_PASSWORD)
+# Auth: Basic (DASHBOARD_USER/PASSWORD) and/or Google OAuth (GOOGLE_CLIENT_ID + SESSION_SECRET)
 _dash_user = os.environ.get("DASHBOARD_USER", "").strip()
 _dash_pass = os.environ.get("DASHBOARD_PASSWORD", "").strip()
-_auth_enabled = bool(_dash_user and _dash_pass)
+_google_client_id = os.environ.get("GOOGLE_CLIENT_ID", "").strip()
+_google_client_secret = os.environ.get("GOOGLE_CLIENT_SECRET", "").strip()
+_session_secret = os.environ.get("SESSION_SECRET", "").strip()
+_google_auth_enabled = bool(_google_client_id and _google_client_secret and _session_secret)
+_basic_auth_enabled = bool(_dash_user and _dash_pass)
+_auth_enabled = _basic_auth_enabled or _google_auth_enabled
 
+# Optional: restrict Google login to specific domains (comma-separated, e.g. gmail.com,woodfamily.ai)
+_allowed_domains = [d.strip().lower() for d in os.environ.get("GOOGLE_AUTH_ALLOWED_DOMAINS", "").split(",") if d.strip()]
 
 DEFAULT_DISPLAY_NAME = os.environ.get("DASHBOARD_DISPLAY_NAME", "Jack Wood").strip() or "Jack Wood"
 
 
+def _get_auth_redirect_uri() -> str:
+    base = os.environ.get("DASHBOARD_URL", "http://localhost:8000").rstrip("/")
+    return f"{base}/api/auth/google/callback"
+
+
+def _is_public_path(path: str) -> bool:
+    return path in ("/", "/login", "/health") or path.startswith(("/static/", "/api/auth/"))
+
+
 class AuthMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next: Callable) -> Response:
-        request.state.user = DEFAULT_DISPLAY_NAME  # Default when no auth or unauthenticated
+        request.state.user = DEFAULT_DISPLAY_NAME
         if not _auth_enabled:
             return await call_next(request)
-        auth = request.headers.get("Authorization", "")
-        if auth.startswith("Basic "):
-            try:
-                decoded = base64.b64decode(auth[6:]).decode()
-                user, _, passwd = decoded.partition(":")
-                if secrets.compare_digest(user, _dash_user) and secrets.compare_digest(passwd, _dash_pass):
-                    request.state.user = user
-                    return await call_next(request)
-            except Exception:
-                pass
+        path = request.url.path
+        if _is_public_path(path):
+            return await call_next(request)
+        # Check session (Google login)
+        if _google_auth_enabled:
+            session = getattr(request, "session", None) or {}
+            if session.get("user"):
+                request.state.user = session["user"].get("name") or session["user"].get("email") or DEFAULT_DISPLAY_NAME
+                return await call_next(request)
+        # Check Basic auth
+        if _basic_auth_enabled:
+            auth = request.headers.get("Authorization", "")
+            if auth.startswith("Basic "):
+                try:
+                    decoded = base64.b64decode(auth[6:]).decode()
+                    user, _, passwd = decoded.partition(":")
+                    if secrets.compare_digest(user, _dash_user) and secrets.compare_digest(passwd, _dash_pass):
+                        request.state.user = user
+                        return await call_next(request)
+                except Exception:
+                    pass
+        # Unauthorized: redirect HTML requests to login, 401 for API
+        if "text/html" in request.headers.get("Accept", "") and path == "/":
+            return RedirectResponse(url="/login", status_code=302)
         return Response(content="Unauthorized", status_code=401, headers={"WWW-Authenticate": "Basic realm=Dashboard"})
 
 
+# Session must run before AuthMiddleware so request.session is available
 app.add_middleware(AuthMiddleware)
+if _google_auth_enabled:
+    from starlette.middleware.sessions import SessionMiddleware  # requires itsdangerous
+    app.add_middleware(SessionMiddleware, secret_key=_session_secret, max_age=14 * 24 * 3600)  # 14 days
 
 # OpenTelemetry (with span buffer for dashboard widget)
 init_tracing(service_name="dashboard", buffer_spans=True, buffer_size=50)
@@ -827,6 +866,25 @@ def yahoo_callback(code: str = ""):
         return HTMLResponse(f"<p>Error: {e}</p>", status_code=500)
 
 
+# --- Twilio (SMS) ---
+
+@app.get("/api/integrations/twilio/status")
+def twilio_status():
+    """Return whether Twilio SMS is configured (via env vars)."""
+    try:
+        from shared.communications_agent import sms_available
+        connected = sms_available()
+        phone = os.environ.get("TWILIO_PHONE_NUMBER", "").strip()
+        # Mask for display: +1555***4567
+        masked = f"{phone[:4]}***{phone[-4:]}" if len(phone) >= 8 else ""
+        return {
+            "connected": connected,
+            "phone_masked": masked if connected else None,
+        }
+    except Exception:
+        return {"connected": False, "phone_masked": None}
+
+
 # --- Communications ---
 
 @app.get("/api/communications/status")
@@ -878,6 +936,145 @@ def communications_run_now():
 def health():
     """Health check for load balancers and monitoring."""
     return {"status": "ok"}
+
+
+# --- Google Auth (login) ---
+
+LOGIN_HTML = """<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Sign in – Woody Dashboard</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+  <style>
+    * { box-sizing: border-box; }
+    body { font-family: 'DM Sans', sans-serif; margin: 0; min-height: 100vh; display: flex; align-items: center; justify-content: center; background: #0f0f0f; color: #e0e0e0; }
+    .card { background: #1a1a1a; padding: 2.5rem; border-radius: 12px; text-align: center; max-width: 360px; }
+    h1 { margin: 0 0 0.5rem; font-size: 1.5rem; }
+    p { margin: 0 0 1.5rem; color: #888; font-size: 0.95rem; }
+    a { display: inline-flex; align-items: center; gap: 0.5rem; background: #4285f4; color: white; text-decoration: none; padding: 0.75rem 1.25rem; border-radius: 8px; font-weight: 500; transition: background 0.2s; }
+    a:hover { background: #3367d6; }
+    svg { width: 20px; height: 20px; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h1>Woody Dashboard</h1>
+    <p>Sign in with your Google account</p>
+    <a href="/api/auth/google/authorize">
+      <svg viewBox="0 0 24 24"><path fill="currentColor" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/><path fill="currentColor" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/><path fill="currentColor" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"/><path fill="currentColor" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/></svg>
+      Sign in with Google
+    </a>
+  </div>
+</body>
+</html>
+"""
+
+
+@app.get("/login", response_class=HTMLResponse)
+def login_page(request: Request):
+    """Login page with Sign in with Google."""
+    if not _google_auth_enabled:
+        return HTMLResponse("<p>Google Auth not configured. Set GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, SESSION_SECRET.</p>", status_code=500)
+    # Redirect to dashboard if already logged in
+    session = getattr(request, "session", None) or {}
+    if session.get("user"):
+        return RedirectResponse(url="/", status_code=302)
+    return HTMLResponse(LOGIN_HTML)
+
+
+@app.get("/api/auth/google/authorize")
+def auth_google_authorize(request: Request):
+    """Redirect to Google OAuth for login."""
+    if not _google_auth_enabled:
+        return HTMLResponse("<p>Google Auth not configured.</p>", status_code=500)
+    from google_auth_oauthlib.flow import Flow
+    redirect_uri = _get_auth_redirect_uri()
+    flow = Flow.from_client_config(
+        {
+            "web": {
+                "client_id": _google_client_id,
+                "client_secret": _google_client_secret,
+                "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+                "token_uri": "https://oauth2.googleapis.com/token",
+                "redirect_uris": [redirect_uri],
+            }
+        },
+        scopes=["openid", "https://www.googleapis.com/auth/userinfo.email", "https://www.googleapis.com/auth/userinfo.profile"],
+        redirect_uri=redirect_uri,
+    )
+    auth_url, _ = flow.authorization_url(access_type="offline", prompt="select_account")
+    return RedirectResponse(auth_url)
+
+
+@app.get("/api/auth/google/callback")
+async def auth_google_callback(request: Request, code: str = ""):
+    """Handle Google OAuth callback, set session, redirect to dashboard."""
+    if not _google_auth_enabled:
+        return RedirectResponse(url="/login", status_code=302)
+    if not code:
+        return RedirectResponse(url="/login?error=no_code", status_code=302)
+    try:
+        from google_auth_oauthlib.flow import Flow
+        import httpx
+        redirect_uri = _get_auth_redirect_uri()
+        flow = Flow.from_client_config(
+            {
+                "web": {
+                    "client_id": _google_client_id,
+                    "client_secret": _google_client_secret,
+                    "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+                    "token_uri": "https://oauth2.googleapis.com/token",
+                    "redirect_uris": [redirect_uri],
+                }
+            },
+            scopes=["openid", "https://www.googleapis.com/auth/userinfo.email", "https://www.googleapis.com/auth/userinfo.profile"],
+            redirect_uri=redirect_uri,
+        )
+        flow.fetch_token(code=code)
+        creds = flow.credentials
+        async with httpx.AsyncClient() as client:
+            r = await client.get(
+                "https://www.googleapis.com/oauth2/v2/userinfo",
+                headers={"Authorization": f"Bearer {creds.token}"},
+            )
+        if r.status_code != 200:
+            return RedirectResponse(url="/login?error=userinfo_failed", status_code=302)
+        info = r.json()
+        email = (info.get("email") or "").strip().lower()
+        if _allowed_domains and email:
+            domain = email.split("@")[-1] if "@" in email else ""
+            if domain not in _allowed_domains:
+                return RedirectResponse(url="/login?error=domain_not_allowed", status_code=302)
+        request.session["user"] = {
+            "email": email,
+            "name": (info.get("name") or info.get("email") or "User").strip(),
+            "picture": info.get("picture"),
+        }
+        return RedirectResponse(url="/", status_code=302)
+    except Exception as e:
+        logging.getLogger(__name__).exception("Google auth callback failed")
+        return RedirectResponse(url=f"/login?error={type(e).__name__}", status_code=302)
+
+
+@app.get("/api/auth/logout")
+async def auth_logout(request: Request):
+    """Clear session and redirect to login."""
+    if hasattr(request, "session"):
+        request.session.clear()
+    return RedirectResponse(url="/login", status_code=302)
+
+
+@app.get("/api/auth/me")
+def auth_me(request: Request):
+    """Return current user from session (for frontend)."""
+    session = getattr(request, "session", None) or {}
+    user = session.get("user")
+    if not user:
+        return {"logged_in": False, "user": None}
+    return {"logged_in": True, "user": {"email": user.get("email"), "name": user.get("name"), "picture": user.get("picture")}}
 
 
 @app.get("/api/me")
@@ -946,15 +1143,27 @@ def refresh_memory(query: str, bump_weight: bool = False):
 
 # --- Memory Agent (nightly proposals, user approval before commit) ---
 
+def _ensure_woody_db(db_path: Path) -> Path:
+    """Ensure Woody DB exists; create if missing. Returns resolved path."""
+    db_path = db_path.resolve()
+    if not db_path.exists():
+        db_path.parent.mkdir(parents=True, exist_ok=True)
+        woody_dir = Path(__file__).resolve().parent.parent.parent / "woody"
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("woody_db", str(woody_dir / "app" / "db.py"))
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        mod.init_db(db_path)
+    return db_path
+
+
 @app.get("/api/memory-agent/proposals")
 def memory_agent_proposals():
     """List pending memory agent proposals. User must approve before changes are committed."""
     try:
-        from shared.chat import get_woody_db_path
+        from shared.db_path import get_woody_db_path
         from shared.memory_agent import list_pending_proposals
-        db_path = get_woody_db_path()
-        if not db_path.exists():
-            return {"proposals": []}
+        db_path = _ensure_woody_db(get_woody_db_path())
         return {"proposals": list_pending_proposals(db_path)}
     except Exception as e:
         return {"proposals": [], "error": str(e)}
@@ -964,11 +1173,9 @@ def memory_agent_proposals():
 def memory_agent_approve(proposal_id: str):
     """Approve a proposal and commit the change. Trains the agent by confirming the action."""
     try:
-        from shared.chat import get_woody_db_path
+        from shared.db_path import get_woody_db_path
         from shared.memory_agent import resolve_proposal, commit_proposal
-        db_path = get_woody_db_path()
-        if not db_path.exists():
-            return {"ok": False, "message": "Woody database not found."}
+        db_path = _ensure_woody_db(get_woody_db_path())
         if not resolve_proposal(db_path, proposal_id, "approved"):
             return {"ok": False, "message": "Proposal not found or already resolved."}
         ok, msg = commit_proposal(db_path, proposal_id)
@@ -981,12 +1188,10 @@ def memory_agent_approve(proposal_id: str):
 def memory_agent_reject(proposal_id: str):
     """Reject a proposal. Trains the agent by indicating the action is not desired."""
     try:
-        from shared.chat import get_woody_db_path
+        from shared.db_path import get_woody_db_path
         from shared.memory_agent import resolve_proposal, get_proposal
         from shared.user_actions import log_action
-        db_path = get_woody_db_path()
-        if not db_path.exists():
-            return {"ok": False, "message": "Woody database not found."}
+        db_path = _ensure_woody_db(get_woody_db_path())
         prop = get_proposal(db_path, proposal_id)
         ok = resolve_proposal(db_path, proposal_id, "rejected")
         if ok and prop and prop.get("action_type") == "event_suggestion":
@@ -1001,11 +1206,9 @@ def memory_agent_reject(proposal_id: str):
 def memory_agent_approve_all():
     """Approve all pending memory agent proposals."""
     try:
-        from shared.chat import get_woody_db_path
+        from shared.db_path import get_woody_db_path
         from shared.memory_agent import list_pending_proposals, resolve_proposal, commit_proposal
-        db_path = get_woody_db_path()
-        if not db_path.exists():
-            return {"ok": False, "message": "Woody database not found."}
+        db_path = _ensure_woody_db(get_woody_db_path())
         proposals = list_pending_proposals(db_path)
         results = []
         for p in proposals:
@@ -1026,12 +1229,10 @@ def memory_agent_approve_all():
 def memory_agent_reject_all():
     """Reject all pending memory agent proposals."""
     try:
-        from shared.chat import get_woody_db_path
+        from shared.db_path import get_woody_db_path
         from shared.memory_agent import list_pending_proposals, resolve_proposal, get_proposal
         from shared.user_actions import log_action
-        db_path = get_woody_db_path()
-        if not db_path.exists():
-            return {"ok": False, "message": "Woody database not found."}
+        db_path = _ensure_woody_db(get_woody_db_path())
         proposals = list_pending_proposals(db_path)
         results = []
         for p in proposals:
@@ -1053,9 +1254,9 @@ def memory_agent_reject_all():
 def memory_agent_run_now():
     """Manually trigger the memory agent to propose changes (normally runs nightly)."""
     try:
-        from shared.chat import get_woody_db_path
+        from shared.db_path import get_woody_db_path
         from shared.memory_agent import run_memory_agent
-        db_path = get_woody_db_path()
+        db_path = _ensure_woody_db(get_woody_db_path())
         summary = run_memory_agent(db_path)
         return {"ok": True, "summary": summary}
     except Exception as e:
@@ -1066,9 +1267,9 @@ def memory_agent_run_now():
 def events_agent_run_now():
     """Manually trigger the EVENTS agent to propose event→memory changes (also runs as part of Memory Agent)."""
     try:
-        from shared.chat import get_woody_db_path
+        from shared.db_path import get_woody_db_path
         from shared.events_agent import run_events_agent
-        db_path = get_woody_db_path()
+        db_path = _ensure_woody_db(get_woody_db_path())
         summary = run_events_agent(db_path)
         return {"ok": True, "summary": summary}
     except Exception as e:
@@ -1290,17 +1491,34 @@ def delete_circle(id: int):
     return {"ok": True}
 
 
-# --- Wishlist (Woody DB, chat_id=0 for dashboard) ---
+# --- Wishlist, TODOs (Woody DB) ---
+# Use TELEGRAM_REMINDER_CHAT_ID when set so items added via Telegram appear in dashboard
+def _get_dashboard_chat_id() -> int:
+    try:
+        cid = os.environ.get("TELEGRAM_REMINDER_CHAT_ID", "").strip()
+        if cid and cid.lstrip("-").isdigit():
+            return int(cid)
+    except (ValueError, TypeError):
+        pass
+    return 0
 
-DASHBOARD_CHAT_ID = 0
+
+DASHBOARD_CHAT_ID = _get_dashboard_chat_id()
 
 
 def _get_woody_conn():
-    from shared.chat import get_woody_db_path
+    from pathlib import Path
+    from shared.db_path import get_woody_db_path
     import sqlite3
-    db_path = get_woody_db_path()
+    db_path = get_woody_db_path().resolve()
     if not db_path.exists():
-        raise FileNotFoundError("Woody database not found. Run Woody once to create it.")
+        db_path.parent.mkdir(parents=True, exist_ok=True)
+        woody_dir = Path(__file__).resolve().parent.parent.parent / "woody"
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("woody_db", str(woody_dir / "app" / "db.py"))
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        mod.init_db(db_path)
     conn = sqlite3.connect(str(db_path))
     conn.row_factory = sqlite3.Row
     return conn
@@ -1355,6 +1573,60 @@ def delete_wishlist_item(id: int):
         return {"ok": False, "error": str(e)}
 
 
+@app.get("/api/todos")
+def list_todos(limit: int = 100, include_done: bool = True):
+    """List TODOs from Woody DB (dashboard chat_id)."""
+    try:
+        conn = _get_woody_conn()
+        if include_done:
+            rows = conn.execute(
+                "SELECT id, content, status, due_date, created_at FROM todos WHERE chat_id = ? ORDER BY status ASC, due_date IS NULL, due_date ASC, created_at DESC LIMIT ?",
+                (DASHBOARD_CHAT_ID, limit),
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                "SELECT id, content, status, due_date, created_at FROM todos WHERE chat_id = ? AND status = 'pending' ORDER BY due_date IS NULL, due_date ASC, created_at DESC LIMIT ?",
+                (DASHBOARD_CHAT_ID, limit),
+            ).fetchall()
+        conn.close()
+        return [dict(r) for r in rows]
+    except (FileNotFoundError, Exception):
+        return []
+
+
+@app.post("/api/todos/{id}/complete")
+def complete_todo(id: int):
+    """Mark a TODO as done."""
+    try:
+        conn = _get_woody_conn()
+        cur = conn.execute(
+            "UPDATE todos SET status = 'done' WHERE id = ? AND chat_id = ? AND status = 'pending'",
+            (id, DASHBOARD_CHAT_ID),
+        )
+        conn.commit()
+        conn.close()
+        if cur.rowcount > 0:
+            return {"ok": True}
+        return {"ok": False, "error": "TODO not found or already done"}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
+
+@app.delete("/api/todos/{id}")
+def delete_todo(id: int):
+    """Remove a TODO."""
+    try:
+        conn = _get_woody_conn()
+        cur = conn.execute("DELETE FROM todos WHERE id = ? AND chat_id = ?", (id, DASHBOARD_CHAT_ID))
+        conn.commit()
+        conn.close()
+        if cur.rowcount > 0:
+            return {"ok": True}
+        return {"ok": False, "error": "TODO not found"}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
+
 @app.post("/api/todos")
 def create_todo(t: TodoCreate):
     """Add a TODO to Woody (dashboard chat_id=0). Used when adding event to TODO list."""
@@ -1389,7 +1661,7 @@ def create_todo(t: TodoCreate):
 def fulfill_wishlist_item(id: int):
     """Mark wishlist item as fulfilled: creates a completed event and removes from wishlist."""
     try:
-        from shared.chat import get_woody_db_path
+        from shared.db_path import get_woody_db_path
         from shared.events_agent import fulfill_wishlist_item as do_fulfill
         db_path = get_woody_db_path()
         event_id = do_fulfill(id, woody_db_path=db_path)
@@ -1405,10 +1677,6 @@ def fulfill_wishlist_item(id: int):
 
 class ChatMessage(BaseModel):
     message: str
-
-
-class ChatApprove(BaseModel):
-    approval_id: str
 
 
 @app.get("/api/chat/history")
@@ -1430,97 +1698,71 @@ def chat_history(limit: int = 20):
         return {"messages": []}
 
 
-@app.get("/api/chat/approvals")
-def chat_pending_approvals():
-    """List pending approvals for dashboard chat. Auto-expires any older than 24 hours."""
-    try:
-        from shared.chat import get_pending_approvals
-        approvals = get_pending_approvals(chat_id=DASHBOARD_CHAT_ID)
-        return {"approvals": approvals}
-    except Exception as e:
-        return {"approvals": [], "error": str(e)}
-
-
 @app.post("/api/chat")
 def chat_send(m: ChatMessage):
-    """Send a message to Woody. Returns response and optional approval_id."""
-    import re
+    """Send a message to Woody. Returns response."""
     msg = m.message.strip()
-    # Handle APPROVE/REJECT typed in chat (like Telegram)
-    approve_match = re.match(r"approve\s+(\w+)", msg, re.IGNORECASE)
-    reject_match = re.match(r"reject\s+(\w+)", msg, re.IGNORECASE)
-    if approve_match:
-        try:
-            from shared.chat import execute_approval
-            ok, resp = execute_approval(approve_match.group(1), chat_id=DASHBOARD_CHAT_ID)
-            return {"response": resp, "approval_id": None}
-        except Exception as e:
-            return {"response": f"Error: {e}", "approval_id": None}
-    if reject_match:
-        try:
-            from shared.chat import reject_approval
-            ok, resp = reject_approval(reject_match.group(1), chat_id=DASHBOARD_CHAT_ID)
-            return {"response": resp, "approval_id": None}
-        except Exception:
-            return {"response": "Reject failed.", "approval_id": None}
     try:
         from shared.chat import run_chat
-        response, approval_id = run_chat(msg, chat_id=DASHBOARD_CHAT_ID)
-        return {"response": response, "approval_id": approval_id}
+        response, _db_path = run_chat(msg, chat_id=DASHBOARD_CHAT_ID)
+        return {"response": response}
     except Exception as e:
-        return {"response": f"Error: {e}", "approval_id": None}
+        return {"response": f"Error: {e}"}
 
 
-@app.post("/api/chat/approve")
-def chat_approve(a: ChatApprove):
-    """Approve a pending action from chat."""
-    try:
-        from shared.chat import execute_approval
-        ok, msg = execute_approval(a.approval_id.strip(), chat_id=DASHBOARD_CHAT_ID)
-        return {"ok": ok, "message": msg}
-    except Exception as e:
-        return {"ok": False, "message": str(e)}
+@app.get("/api/debug/woody-db")
+def debug_woody_db(approval_id: Optional[str] = None):
+    """Return Woody DB path, scan ALL app.db locations, and optionally search for approval_id."""
+    import sqlite3
+    from shared.db_path import get_woody_db_path
 
+    woody_path = get_woody_db_path().resolve()
+    repo = Path(__file__).resolve().parent.parent.parent
+    # Canonical path first (what create/list/approve actually use)
+    candidates = [
+        ("canonical (get_woody_db_path)", woody_path),
+        ("woody/app.db", repo / "woody" / "app.db"),
+        ("dashboard/app.db", repo / "dashboard" / "app.db"),
+        ("app.db", repo / "app.db"),
+    ]
+    # Dedupe by path
+    seen = set()
+    unique = []
+    for label, p in candidates:
+        key = str(p.resolve())
+        if key in seen:
+            continue
+        seen.add(key)
+        unique.append((label, Path(key)))
 
-@app.post("/api/chat/reject")
-def chat_reject(a: ChatApprove):
-    """Reject a pending action from chat."""
-    try:
-        from shared.chat import reject_approval
-        ok, msg = reject_approval(a.approval_id.strip(), chat_id=DASHBOARD_CHAT_ID)
-        return {"ok": ok, "message": msg}
-    except Exception as e:
-        return {"ok": False, "message": str(e)}
+    dbs = []
+    for label, p in unique:
+        info = {"path": str(p), "exists": p.exists(), "approvals": [], "pending_count": 0, "wishlist_count": 0}
+        if p.exists():
+            try:
+                conn = sqlite3.connect(str(p))
+                info["pending_count"] = conn.execute("SELECT COUNT(*) FROM approvals WHERE status = 'pending'").fetchone()[0]
+                cur = conn.execute(
+                    "SELECT id, chat_id, tool_name, status, created_at FROM approvals ORDER BY created_at DESC LIMIT 20"
+                )
+                info["approvals"] = [{"id": r[0], "chat_id": r[1], "tool_name": r[2], "status": r[3], "created_at": r[4]} for r in cur.fetchall()]
+                try:
+                    info["wishlist_count"] = conn.execute("SELECT COUNT(*) FROM wishlist").fetchone()[0]
+                except Exception:
+                    pass
+                if approval_id:
+                    row = conn.execute("SELECT id, status, created_at FROM approvals WHERE LOWER(id) = LOWER(?)", (approval_id.strip(),)).fetchone()
+                    info["search_result"] = {"found": bool(row), "row": list(row) if row else None}
+                conn.close()
+            except Exception as e:
+                info["error"] = str(e)
+        dbs.append({"label": label, **info})
 
-
-@app.post("/api/chat/approve-all")
-def chat_approve_all():
-    """Approve all pending actions for the dashboard chat."""
-    try:
-        from shared.chat import get_pending_approvals, execute_approval
-        approvals = get_pending_approvals(chat_id=DASHBOARD_CHAT_ID)
-        results = []
-        for a in approvals:
-            ok, msg = execute_approval(a["id"], chat_id=DASHBOARD_CHAT_ID)
-            results.append({"id": a["id"], "ok": ok, "message": msg})
-        return {"ok": True, "results": results, "count": len(results)}
-    except Exception as e:
-        return {"ok": False, "message": str(e)}
-
-
-@app.post("/api/chat/reject-all")
-def chat_reject_all():
-    """Reject all pending actions for the dashboard chat."""
-    try:
-        from shared.chat import get_pending_approvals, reject_approval
-        approvals = get_pending_approvals(chat_id=DASHBOARD_CHAT_ID)
-        results = []
-        for a in approvals:
-            ok, msg = reject_approval(a["id"], chat_id=DASHBOARD_CHAT_ID)
-            results.append({"id": a["id"], "ok": ok, "message": msg})
-        return {"ok": True, "results": results, "count": len(results)}
-    except Exception as e:
-        return {"ok": False, "message": str(e)}
+    return {
+        "woody_db_path": str(woody_path),
+        "all_dbs": dbs,
+        "search_approval_id": approval_id,
+    }
 
 
 @app.get("/api/otel/traces")

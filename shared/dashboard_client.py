@@ -22,6 +22,12 @@ def _get_auth_headers() -> dict[str, str]:
     return {"Authorization": f"Basic {creds}"}
 
 
+def _ssl_verify() -> bool:
+    """Skip SSL verification when DASHBOARD_SSL_VERIFY=false (e.g. Docker dev with self-signed cert)."""
+    v = os.environ.get("DASHBOARD_SSL_VERIFY", "true").lower()
+    return v not in ("false", "0", "no")
+
+
 def dashboard_request(
     method: str,
     path: str,
@@ -32,7 +38,7 @@ def dashboard_request(
     url = f"{_get_base_url()}{path}"
     headers = _get_auth_headers()
     try:
-        with httpx.Client(timeout=15.0) as client:
+        with httpx.Client(timeout=15.0, verify=_ssl_verify()) as client:
             r = client.request(method, url, json=json, params=params, headers=headers)
             if r.status_code >= 400:
                 return None, f"Dashboard: {r.status_code} {r.text[:200]}"

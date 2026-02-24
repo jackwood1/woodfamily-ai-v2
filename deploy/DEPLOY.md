@@ -71,15 +71,16 @@ cp .env.example .env
 | `YAHOO_CLIENT_SECRET` | Yahoo OAuth |
 | `YAHOO_REDIRECT_URI` | `https://woodfamily.ai/api/integrations/yahoo/callback` |
 | `DASHBOARD_URL` | `https://woodfamily.ai` |
-| `DASHBOARD_USER` | Basic auth username |
+| `DASHBOARD_USER` | Basic auth username (or use Google Auth) |
 | `DASHBOARD_PASSWORD` | Basic auth password |
+| `SESSION_SECRET` | For Google Auth: random string (e.g. `openssl rand -hex 32`) |
 | `CALENDAR_TIMEZONE` | e.g. `America/Los_Angeles` |
 
 ### 5. Update OAuth redirect URIs
 
 In **Google Cloud Console** → APIs & Services → Credentials → your OAuth client:
 
-- Add authorized redirect URI: `https://woodfamily.ai/api/integrations/google/callback`
+- Add authorized redirect URIs: `https://woodfamily.ai/api/integrations/google/callback`, `https://woodfamily.ai/api/auth/google/callback`
 - Add authorized JavaScript origin: `https://woodfamily.ai`
 
 In **Yahoo Developer** (if used):

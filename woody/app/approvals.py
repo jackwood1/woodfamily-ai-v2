@@ -3,11 +3,14 @@
 from __future__ import annotations
 
 import json
+import logging
 import uuid
 from pathlib import Path
 from typing import Any, Optional
 
 from app.db import execute, get_conn
+
+log = logging.getLogger(__name__)
 
 
 def create_approval(
@@ -20,6 +23,8 @@ def create_approval(
 ) -> str:
     """Persist approval record and return approval ID."""
     approval_id = str(uuid.uuid4())[:8]
+    resolved = Path(db_path).resolve()
+    log.info("[APPROVAL] create_approval: id=%s db_path=%s (resolved=%s)", approval_id, db_path, resolved)
     execute(
         db_path,
         """

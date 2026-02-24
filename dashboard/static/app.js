@@ -3,17 +3,14 @@ const API = "";
 function updateAiTabBadge() {
   const badge = document.getElementById("tab-ai-badge");
   if (!badge) return;
-  const approvalsEl = document.getElementById("list-approvals");
   const proposalsEl = document.getElementById("list-memory-agent");
-  const approvals = approvalsEl ? approvalsEl.querySelectorAll("li").length : 0;
   const proposals = proposalsEl ? proposalsEl.querySelectorAll("li").length : 0;
-  const total = approvals + proposals;
-  if (total === 0) {
+  if (proposals === 0) {
     badge.hidden = true;
     badge.textContent = "";
   } else {
     badge.hidden = false;
-    badge.textContent = total > 9 ? "9+" : String(total);
+    badge.textContent = proposals > 9 ? "9+" : String(proposals);
   }
 }
 
@@ -40,13 +37,24 @@ initTabs();
 async function fetchJSON(path, opts = {}) {
   const res = await fetch(API + path, {
     ...opts,
+    credentials: "include",
     headers: { "Content-Type": "application/json", ...opts.headers },
   });
+  if (res.status === 401 && path !== "/api/auth/me") {
+    window.location.href = "/login";
+    throw new Error("Unauthorized");
+  }
   if (!res.ok) throw new Error(await res.text());
   return res.json();
 }
 
 function showForm(type) {
+  if (type === "note" || type === "todo") {
+    ["note", "todo"].forEach((t) => {
+      const f = document.getElementById(`form-${t}`);
+      if (f) f.hidden = t !== type;
+    });
+  }
   const form = document.getElementById(`form-${type}`);
   if (!form) return;
   form.hidden = false;
@@ -57,7 +65,8 @@ function showForm(type) {
 }
 
 function hideForm(type) {
-  document.getElementById(`form-${type}`).hidden = true;
+  const form = document.getElementById(`form-${type}`);
+  if (form) form.hidden = true;
 }
 
 // Events
@@ -104,7 +113,7 @@ document.getElementById("form-decision").addEventListener("submit", async (e) =>
   loadDecisions();
 });
 
-document.getElementById("form-note").addEventListener("submit", async (e) => {
+document.getElementById("form-note")?.addEventListener("submit", async (e) => {
   e.preventDefault();
   const fd = new FormData(e.target);
   await fetchJSON("/api/notes", {
@@ -117,7 +126,23 @@ document.getElementById("form-note").addEventListener("submit", async (e) => {
   });
   e.target.reset();
   hideForm("note");
-  loadNotes();
+  loadNotesAndTodos();
+});
+
+document.getElementById("form-todo")?.addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const fd = new FormData(e.target);
+  const res = await fetchJSON("/api/todos", {
+    method: "POST",
+    body: JSON.stringify({
+      content: fd.get("content"),
+      due_date: (fd.get("due_date") || "").slice(0, 10) || "",
+    }),
+  });
+  e.target.reset();
+  hideForm("todo");
+  if (res.ok) loadNotesAndTodos();
+  else alert(res.error || "Failed to add todo.");
 });
 
 document.getElementById("btn-import-google")?.addEventListener("click", async () => {
@@ -314,9 +339,10 @@ function renderDecision(d) {
   `;
 }
 
-function renderNote(n) {
+function renderNoteItem(n) {
   return `
-    <li>
+    <li class="notes-todos-item notes-todos-note" data-type="note" data-id="${n.id}">
+      <span class="item-type-badge badge-note" title="Note – reference info">Note</span>
       <div class="item-header">
         <span class="item-title">${escapeHtml(n.title)}</span>
       </div>
@@ -325,6 +351,24 @@ function renderNote(n) {
       <p class="item-meta">${formatDate(n.updated_at?.slice(0, 10) || n.created_at?.slice(0, 10))}</p>
       <div class="item-actions">
         <button class="btn btn-danger" data-delete-note="${n.id}">Delete</button>
+      </div>
+    </li>
+  `;
+}
+
+function renderTodoItem(t) {
+  const done = t.status === "done";
+  const dueStr = t.due_date ? ` <span class="item-due">due ${formatDate(t.due_date)}</span>` : "";
+  return `
+    <li class="notes-todos-item notes-todos-todo ${done ? "notes-todos-done" : ""}" data-type="todo" data-id="${t.id}">
+      <span class="item-type-badge badge-todo" title="Todo – task to complete">${done ? "✓" : "○"}</span>
+      <div class="item-header">
+        <span class="item-title ${done ? "item-title-done" : ""}">${escapeHtml(t.content || "")}</span>${dueStr}
+      </div>
+      <p class="item-meta">${formatDate(t.created_at?.slice(0, 10))}</p>
+      <div class="item-actions">
+        ${!done ? `<button class="btn btn-primary" data-complete-todo="${t.id}">Done</button>` : ""}
+        <button class="btn btn-danger" data-delete-todo="${t.id}">Delete</button>
       </div>
     </li>
   `;
@@ -481,6 +525,7 @@ async function loadEvents() {
         });
         if (res.ok) {
           btn.textContent = "Added ✓";
+          loadNotesAndTodos();
         } else {
           btn.disabled = false;
           alert(res.error || "Failed to add to TODO.");
@@ -560,16 +605,47 @@ async function loadDecisions() {
   });
 }
 
-async function loadNotes() {
-  const notes = await fetchJSON("/api/notes");
-  const list = document.getElementById("list-notes");
-  list.innerHTML = notes.length
-    ? notes.map(renderNote).join("")
-    : '<li class="empty">No notes yet. Add one above.</li>';
+async function loadNotesAndTodos() {
+  const [notes, todos] = await Promise.all([
+    fetchJSON("/api/notes"),
+    fetchJSON("/api/todos").catch(() => []),
+  ]);
+  const noteItems = notes.map((n) => ({ ...n, _order: 1, _sort: n.updated_at || n.created_at || "", _type: "note" }));
+  const todoItems = todos.map((t) => ({
+    ...t,
+    _order: t.status === "done" ? 2 : 0,
+    _sort: t.due_date || "9999-99-99",
+    _type: "todo",
+  }));
+  const combined = [...noteItems, ...todoItems].sort((a, b) => {
+    if (a._order !== b._order) return a._order - b._order;
+    if (a._order === 0) return (a._sort || "").localeCompare(b._sort || "");
+    if (a._order === 1) return (b._sort || "").localeCompare(a._sort || "");
+    return (b._sort || "").localeCompare(a._sort || "");
+  });
+  const list = document.getElementById("list-notes-todos");
+  if (!list) return;
+  list.innerHTML = combined.length
+    ? combined.map((item) => (item._type === "note" ? renderNoteItem(item) : renderTodoItem(item))).join("")
+    : '<li class="empty">No notes or todos yet. Add a note or todo above.</li>';
   list.querySelectorAll("[data-delete-note]").forEach((btn) => {
     btn.addEventListener("click", async () => {
       await fetchJSON(`/api/notes/${btn.dataset.deleteNote}`, { method: "DELETE" });
-      loadNotes();
+      loadNotesAndTodos();
+    });
+  });
+  list.querySelectorAll("[data-delete-todo]").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const res = await fetchJSON(`/api/todos/${btn.dataset.deleteTodo}`, { method: "DELETE" });
+      if (res.ok) loadNotesAndTodos();
+      else alert(res.error || "Failed to delete.");
+    });
+  });
+  list.querySelectorAll("[data-complete-todo]").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const res = await fetchJSON(`/api/todos/${btn.dataset.completeTodo}/complete`, { method: "PATCH" });
+      if (res.ok) loadNotesAndTodos();
+      else alert(res.error || "Failed to complete.");
     });
   });
 }
@@ -1053,6 +1129,7 @@ async function loadMemoryAgentProposals() {
           });
           if (res.ok) {
             btn.textContent = "Added ✓";
+            loadNotesAndTodos();
           } else {
             btn.disabled = false;
             alert(res.error || "Failed to add to TODO.");
@@ -1253,6 +1330,22 @@ async function loadYahooStatus() {
   }
 }
 
+async function loadSmsStatus() {
+  const el = document.getElementById("sms-status");
+  if (!el) return;
+  try {
+    const data = await fetchJSON("/api/integrations/twilio/status");
+    if (data.connected) {
+      const phone = data.phone_masked ? ` <span class="integration-caps">(${data.phone_masked})</span>` : "";
+      el.innerHTML = `<span class="status-connected">✓ SMS (Twilio) connected</span>${phone}`;
+    } else {
+      el.innerHTML = '<span class="status-disconnected">SMS not configured</span>';
+    }
+  } catch {
+    el.innerHTML = '<span class="status-disconnected">SMS not configured</span>';
+  }
+}
+
 document.getElementById("btn-disconnect-google")?.addEventListener("click", async function () {
   if (!confirm("Disconnect Google? Woody will lose access to Gmail and Calendar until you reconnect.")) return;
   try {
@@ -1373,7 +1466,7 @@ async function loadWishlist() {
 
 loadEvents();
 loadDecisions();
-loadNotes();
+loadNotesAndTodos();
 let currentUserName = "Jack Wood";
 
 async function loadCurrentUser() {
@@ -1385,10 +1478,28 @@ async function loadCurrentUser() {
   }
 }
 
+async function loadAuthUser() {
+  const el = document.getElementById("header-user");
+  if (!el) return;
+  try {
+    const data = await fetch(API + "/api/auth/me", { credentials: "include" }).then((r) => r.json());
+    if (data.logged_in && data.user) {
+      const name = data.user.name || data.user.email || "User";
+      const img = data.user.picture ? `<img src="${escapeAttr(data.user.picture)}" alt="" width="28" height="28">` : "";
+      el.innerHTML = `${img}<span>${escapeHtml(name)}</span><a href="/api/auth/logout">Sign out</a>`;
+    } else {
+      el.innerHTML = "";
+    }
+  } catch {
+    el.innerHTML = "";
+  }
+}
+
 loadCurrentUser().then(() => {
   loadChatHistory();
   loadPendingApprovals();
 });
+loadAuthUser();
 loadContacts();
 initContactsSearchAndCollapse();
 loadPlaces();
@@ -1401,110 +1512,13 @@ loadOtelTraces();
 loadAboutMe();
 loadGoogleStatus();
 loadYahooStatus();
+loadSmsStatus();
 
 // --- Chat ---
-let pendingApprovalId = null;
-
-function renderApproval(a) {
-  const fullPreview = (a.preview || "").replace(/\n/g, " ");
-  const shortPreview = fullPreview.slice(0, 120);
-  const hasMore = fullPreview.length > 120 || (a.tool_args && Object.keys(a.tool_args).length > 0);
-  const created = a.created_at ? ` (${a.created_at.slice(0, 16)})` : "";
-  const toolArgsJson = a.tool_args ? JSON.stringify(a.tool_args, null, 2) : "";
-  const expandBtn = hasMore
-    ? `<button class="btn btn-add btn-approval-expand" data-approval-id="${escapeHtml(a.id)}" type="button" title="Show full details">▼ Details</button>`
-    : "";
-  return `
-    <li class="approval-item" data-approval-id="${escapeHtml(a.id)}">
-      <p class="item-desc">${escapeHtml(a.tool_name || "action")}${escapeHtml(created)}</p>
-      <p class="item-meta approval-preview">${escapeHtml(shortPreview)}${shortPreview.length >= 120 ? "…" : ""}</p>
-      <div class="approval-details" hidden>
-        <p class="item-meta approval-full-preview">${escapeHtml(fullPreview)}</p>
-        ${toolArgsJson ? `<pre class="approval-tool-args">${escapeHtml(toolArgsJson)}</pre>` : ""}
-        ${a.original_message ? `<p class="item-meta approval-original">User said: ${escapeHtml(a.original_message.slice(0, 200))}${a.original_message.length > 200 ? "…" : ""}</p>` : ""}
-      </div>
-      <div class="item-actions">
-        ${expandBtn}
-        <button class="btn btn-primary btn-approve-item" data-approve-id="${escapeHtml(a.id)}">Approve</button>
-        <button class="btn btn-danger btn-reject-item" data-reject-id="${escapeHtml(a.id)}">Reject</button>
-      </div>
-    </li>
-  `;
-}
-
-async function loadPendingApprovals() {
-  try {
-    const data = await fetchJSON("/api/chat/approvals");
-    const container = document.getElementById("pending-approvals");
-    const list = document.getElementById("list-approvals");
-    if (!container || !list) return;
-    const approvals = data.approvals || [];
-    if (approvals.length === 0) {
-      container.hidden = true;
-      list.innerHTML = "";
-      updateAiTabBadge();
-      return;
-    }
-    container.hidden = false;
-    updateAiTabBadge();
-    list.innerHTML = approvals.map(renderApproval).join("");
-    list.querySelectorAll(".btn-approval-expand").forEach((btn) => {
-      btn.addEventListener("click", () => {
-        const item = btn.closest(".approval-item");
-        const details = item?.querySelector(".approval-details");
-        if (!details) return;
-        const isHidden = details.hidden;
-        details.hidden = !isHidden;
-        btn.textContent = isHidden ? "▲ Less" : "▼ Details";
-      });
-    });
-    list.querySelectorAll(".btn-approve-item").forEach((btn) => {
-      btn.addEventListener("click", async () => {
-        const id = btn.dataset.approveId;
-        if (!id) return;
-        btn.disabled = true;
-        try {
-          const res = await fetchJSON("/api/chat/approve", {
-            method: "POST",
-            body: JSON.stringify({ approval_id: id }),
-          });
-          appendChatMessage("assistant", res.ok ? res.message : "Error: " + res.message);
-          loadPendingApprovals();
-          loadChatHistory();
-        } finally {
-          btn.disabled = false;
-        }
-      });
-    });
-    list.querySelectorAll(".btn-reject-item").forEach((btn) => {
-      btn.addEventListener("click", async () => {
-        const id = btn.dataset.rejectId;
-        if (!id) return;
-        btn.disabled = true;
-        try {
-          const res = await fetchJSON("/api/chat/reject", {
-            method: "POST",
-            body: JSON.stringify({ approval_id: id }),
-          });
-          appendChatMessage("assistant", res.ok ? res.message : "Error: " + res.message);
-          loadPendingApprovals();
-          loadChatHistory();
-        } finally {
-          btn.disabled = false;
-        }
-      });
-    });
-  } catch (e) {
-    const container = document.getElementById("pending-approvals");
-    if (container) container.hidden = true;
-  }
-}
-
 async function loadChatHistory() {
   try {
     const data = await fetchJSON("/api/chat/history");
     const container = document.getElementById("chat-messages");
-    const approveEl = document.getElementById("chat-approve");
     if (!container) return;
     const msgs = data.messages || [];
     container.innerHTML = msgs.length
@@ -1514,7 +1528,6 @@ async function loadChatHistory() {
         }).join("")
       : '<div class="empty">No messages yet. Ask Woody to add an event, remember something, or list your circles.</div>';
     container.scrollTop = container.scrollHeight;
-    if (approveEl) approveEl.hidden = true;
   } catch (e) {
     const container = document.getElementById("chat-messages");
     if (container) container.innerHTML = '<div class="empty">Unable to load chat.</div>';
@@ -1542,11 +1555,6 @@ document.getElementById("form-chat")?.addEventListener("submit", async (e) => {
   appendChatMessage("user", msg);
   showChatThinking(true);
 
-  const approveEl = document.getElementById("chat-approve");
-  const approveIdEl = document.getElementById("chat-approve-id");
-  if (approveEl) approveEl.hidden = true;
-  pendingApprovalId = null;
-
   try {
     const data = await fetchJSON("/api/chat", {
       method: "POST",
@@ -1554,14 +1562,7 @@ document.getElementById("form-chat")?.addEventListener("submit", async (e) => {
     });
     showChatThinking(false);
     appendChatMessage("assistant", data.response || "(No response)");
-    if (data.approval_id) {
-      pendingApprovalId = data.approval_id;
-      if (approveEl) {
-        approveEl.hidden = false;
-        if (approveIdEl) approveIdEl.textContent = `Approve ${data.approval_id} to confirm`;
-      }
-    }
-    loadPendingApprovals();
+    loadChatHistory();
   } catch (err) {
     showChatThinking(false);
     appendChatMessage("assistant", "Error: " + (err.message || err));
@@ -1612,14 +1613,17 @@ document.getElementById("btn-chat-approve")?.addEventListener("click", async () 
   if (btn) btn.disabled = true;
   showChatThinking(true);
   try {
-    const data = await fetchJSON("/api/chat/approve", {
+    const body = { approval_id: pendingApprovalId };
+    if (pendingApprovalDbPath) body.db_path = pendingApprovalDbPath;
+    const data = await fetchJSON("/api/approvals/approve", {
       method: "POST",
-      body: JSON.stringify({ approval_id: pendingApprovalId }),
+      body: JSON.stringify(body),
     });
     showChatThinking(false);
     appendChatMessage("assistant", data.ok ? data.message : "Error: " + data.message);
     if (approveEl) approveEl.hidden = true;
     pendingApprovalId = null;
+    pendingApprovalDbPath = null;
     loadPendingApprovals();
   } catch (err) {
     showChatThinking(false);
@@ -1636,7 +1640,7 @@ document.getElementById("btn-approve-all")?.addEventListener("click", async func
   const btn = this;
   btn.disabled = true;
   try {
-    const res = await fetchJSON("/api/chat/approve-all", { method: "POST" });
+    const res = await fetchJSON("/api/approvals/approve-all", { method: "POST" });
     if (res.ok && res.count > 0) {
       appendChatMessage("assistant", `Approved ${res.count} action(s).`);
       loadPendingApprovals();
@@ -1657,7 +1661,7 @@ document.getElementById("btn-reject-all")?.addEventListener("click", async funct
   const btn = this;
   btn.disabled = true;
   try {
-    const res = await fetchJSON("/api/chat/reject-all", { method: "POST" });
+    const res = await fetchJSON("/api/approvals/reject-all", { method: "POST" });
     if (res.ok && res.count > 0) {
       appendChatMessage("assistant", `Rejected ${res.count} action(s).`);
       loadPendingApprovals();
@@ -1676,44 +1680,58 @@ document.getElementById("btn-reject-all")?.addEventListener("click", async funct
 
 document.getElementById("btn-proposals-approve-all")?.addEventListener("click", async function () {
   const btn = this;
+  const origText = btn.textContent;
   btn.disabled = true;
+  btn.textContent = "Approving…";
   try {
     const res = await fetchJSON("/api/memory-agent/proposals/approve-all", { method: "POST" });
-    if (res.ok && res.count > 0) {
-      alert(`Approved ${res.count} proposal(s).`);
+    if (res.ok && (res.count ?? 0) > 0) {
       loadMemoryAgentProposals();
       loadMemories();
       loadCircles();
       loadEvents();
+      btn.textContent = `Approved ${res.count}`;
+      setTimeout(() => { btn.textContent = origText; }, 1500);
     } else if (res.ok) {
-      alert("No pending proposals.");
+      btn.textContent = "No pending";
+      setTimeout(() => { btn.textContent = origText; }, 1500);
     } else {
+      btn.textContent = origText;
       alert(res.message || "Approve all failed.");
     }
   } catch (e) {
+    btn.textContent = origText;
     alert("Error: " + (e.message || e));
   } finally {
     btn.disabled = false;
+    if (btn.textContent === "Approving…") btn.textContent = origText;
   }
 });
 
 document.getElementById("btn-proposals-reject-all")?.addEventListener("click", async function () {
   const btn = this;
+  const origText = btn.textContent;
   btn.disabled = true;
+  btn.textContent = "Rejecting…";
   try {
     const res = await fetchJSON("/api/memory-agent/proposals/reject-all", { method: "POST" });
-    if (res.ok && res.count > 0) {
-      alert(`Rejected ${res.count} proposal(s).`);
+    if (res.ok && (res.count ?? 0) > 0) {
       loadMemoryAgentProposals();
+      btn.textContent = `Rejected ${res.count}`;
+      setTimeout(() => { btn.textContent = origText; }, 1500);
     } else if (res.ok) {
-      alert("No pending proposals.");
+      btn.textContent = "No pending";
+      setTimeout(() => { btn.textContent = origText; }, 1500);
     } else {
+      btn.textContent = origText;
       alert(res.message || "Reject all failed.");
     }
   } catch (e) {
+    btn.textContent = origText;
     alert("Error: " + (e.message || e));
   } finally {
     btn.disabled = false;
+    if (btn.textContent === "Rejecting…") btn.textContent = origText;
   }
 });
 

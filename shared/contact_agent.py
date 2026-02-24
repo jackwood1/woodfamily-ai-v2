@@ -512,8 +512,8 @@ def build_circles_from_activity(
 
 
 def _get_woody_db_path() -> Path:
-    default = Path(__file__).resolve().parent.parent / "woody" / "app.db"
-    return Path(os.environ.get("WOODY_DB_PATH", str(default)))
+    from shared.db_path import get_woody_db_path
+    return get_woody_db_path()
 
 
 # --- Agent run ---

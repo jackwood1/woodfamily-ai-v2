@@ -10,7 +10,7 @@ from pydantic import BaseModel, ConfigDict
 
 class PermissionTier(str, Enum):
     GREEN = "green"   # Safe read-only
-    YELLOW = "yellow"  # Requires approval
+    YELLOW = "yellow"  # Write tools (execute directly)
     RED = "red"       # Disabled
 
 
@@ -65,7 +65,7 @@ def is_write_tool(name: str) -> bool:
 
 
 def execute_tool(name: str, args: dict[str, Any], **kwargs: Any) -> Any:
-    """Execute tool after policy check. Caller must handle approval for YELLOW tools."""
+    """Execute tool after policy check."""
     tool = get(name)
     if not tool:
         raise ValueError(f"Unknown tool: {name}")
