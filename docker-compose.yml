@@ -6,7 +6,9 @@ services:
     env_file: .env
     environment:
       - PYTHONPATH=/app
-      - DASHBOARD_URL=http://dashboard:8000
+      - WOODY_DB_PATH=/app/woody/app.db
+      - DASHBOARD_URL=https://dashboard:8443
+      - DASHBOARD_SSL_VERIFY=false
     ports:
       - "9000:9000"
     volumes:
@@ -24,14 +26,18 @@ services:
     env_file: .env
     environment:
       - PYTHONPATH=/app
+      - WOODY_DB_PATH=/app/woody/app.db
+      - DASHBOARD_URL=https://localhost:8443
+      - GOOGLE_REDIRECT_URI=https://localhost:8443/api/integrations/google/callback
+      - YAHOO_REDIRECT_URI=https://localhost:8443/api/integrations/yahoo/callback
     ports:
-      - "8000:8000"
+      - "8443:8443"
     volumes:
       - .:/app
     working_dir: /app
-    command: uvicorn dashboard.app.main:app --host 0.0.0.0 --port 8000
+    command: uvicorn dashboard.app.main:app --host 0.0.0.0 --port 8443 --ssl-keyfile=dashboard/dev-certs/key.pem --ssl-certfile=dashboard/dev-certs/cert.pem
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      test: ["CMD", "python", "-c", "import urllib.request; import ssl; ctx = ssl.create_default_context(); ctx.check_hostname = False; ctx.verify_mode = ssl.CERT_NONE; urllib.request.urlopen('https://localhost:8443/health', context=ctx)"]
       interval: 30s
       timeout: 5s
       retries: 3

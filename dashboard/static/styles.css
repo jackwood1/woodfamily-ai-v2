@@ -33,6 +33,40 @@ body {
   border-bottom: 1px solid var(--border);
 }
 
+.header-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 1rem;
+}
+
+.header-user {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.9rem;
+  color: var(--text-muted);
+}
+
+.header-user img {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+}
+
+.header-user a {
+  color: var(--text-muted);
+  text-decoration: none;
+  padding: 0.25rem 0.5rem;
+  border-radius: 4px;
+  transition: color 0.15s, background 0.15s;
+}
+
+.header-user a:hover {
+  color: var(--text);
+  background: var(--bg-hover);
+}
+
 .header h1 {
   margin: 0;
   font-size: 1.75rem;
@@ -143,6 +177,12 @@ body {
   flex-wrap: wrap;
   gap: 0.5rem;
   margin-bottom: 1rem;
+}
+
+.panel-header-actions {
+  display: flex;
+  gap: 0.35rem;
+  align-items: center;
 }
 
 .panel-actions {
@@ -439,6 +479,52 @@ body {
   text-transform: uppercase;
 }
 
+/* Notes & Todos combined list */
+.notes-todos-item {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 0.35rem 0.5rem;
+}
+
+.notes-todos-item .item-type-badge {
+  flex-shrink: 0;
+  font-size: 0.7rem;
+  padding: 0.1rem 0.35rem;
+  border-radius: 4px;
+}
+
+.notes-todos-item .badge-note {
+  background: rgba(201, 162, 39, 0.2);
+  color: var(--accent);
+}
+
+.notes-todos-item .badge-todo {
+  background: rgba(74, 156, 109, 0.2);
+  color: var(--success);
+}
+
+.notes-todos-item .item-header {
+  flex: 1;
+  min-width: 0;
+}
+
+.notes-todos-item .item-due {
+  color: var(--text-muted);
+  font-size: 0.85rem;
+  font-weight: 400;
+}
+
+.notes-todos-done .item-title {
+  text-decoration: line-through;
+  color: var(--text-muted);
+}
+
+.notes-todos-item .item-actions {
+  margin-top: 0;
+  margin-left: auto;
+}
+
 .empty {
   color: var(--text-muted);
   font-size: 0.9rem;
@@ -523,6 +609,10 @@ body {
 }
 
 .status-loading {
+  color: var(--text-muted);
+}
+
+.status-disconnected {
   color: var(--text-muted);
 }
 

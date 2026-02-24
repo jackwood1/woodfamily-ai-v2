@@ -39,11 +39,16 @@ def get_upcoming_events_from_db(limit: int = 20) -> List[dict]:
         return []
 
 
+def _dashboard_ssl_verify() -> bool:
+    v = os.environ.get("DASHBOARD_SSL_VERIFY", "true").lower()
+    return v not in ("false", "0", "no")
+
+
 def get_upcoming_events_from_api(base_url: str = "") -> List[dict]:
     """Fetch upcoming events from dashboard API (includes Google Calendar)."""
     url = base_url or os.environ.get("DASHBOARD_URL", "http://localhost:8000")
     try:
-        with httpx.Client(timeout=10.0) as client:
+        with httpx.Client(timeout=10.0, verify=_dashboard_ssl_verify()) as client:
             r = client.get(f"{url.rstrip('/')}/api/events?coming=1")
             if r.status_code == 200:
                 return r.json()
@@ -56,7 +61,7 @@ def get_requires_scheduling_from_api(base_url: str = "", days: int = 14) -> List
     """Fetch items requiring scheduling (bills, inspections, birthdays) from dashboard API."""
     url = base_url or os.environ.get("DASHBOARD_URL", "http://localhost:8000")
     try:
-        with httpx.Client(timeout=10.0) as client:
+        with httpx.Client(timeout=10.0, verify=_dashboard_ssl_verify()) as client:
             r = client.get(f"{url.rstrip('/')}/api/events/requires-scheduling?days={days}")
             if r.status_code == 200:
                 return r.json()

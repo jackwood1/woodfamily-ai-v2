@@ -10,7 +10,6 @@ from typing import Any
 
 from openai import OpenAI
 
-from app.approvals import create_approval
 from app.conversation import add_message, get_messages
 from app.tools import execute_tool, get_openai_tools, is_write_tool
 
@@ -24,21 +23,18 @@ SYSTEM_PROMPT = """You are Woody, a personal AI assistant for the Wood family. Y
 **Tools**
 - Use tools when they help answer the question: lists, calendar, communications (email/SMS), files, web fetch, memory, reminders, TODOs.
 - For *read* tools (list, search, fetch): run them and report the result.
-- For *write* tools (add item, send email/SMS, create event, store memory): you MUST call the tool. The system will show an approval message with a real ID. Never describe the approval in your own words—always call the tool.
+- For *write* tools (add item, send email/SMS, create event, store memory): ALWAYS call the tool immediately. Never ask for approval, a code, or "go-ahead"—just call the tool. Actions execute directly.
 - For calendar_create_event: use the date reference above. "Monday" = the next Monday from today; "tomorrow" = the day after today. Always output concrete ISO dates (e.g. 2025-02-24), never past dates.
 - If a tool fails, report the error plainly. Don't pretend it worked.
 
 **Memory**
-- When the user says "remember X" or "store this", use memory_store. Use weight 1-10 for importance; memory_type 'short' for temporary, 'long' for permanent. They'll need to approve.
+- When the user says "remember X" or "store this", use memory_store. Use weight 1-10 for importance; memory_type 'short' for temporary, 'long' for permanent.
 - Use memory_search when the question might be answered by something you've stored. Use memory_refresh when the user wants to "exercise" or reinforce a memory. Use memory_remove when the user wants to forget or delete a memory.
-- For communications: use communications_send for email or SMS (channel: email|sms). Use communications_read to search emails, communications_get_email to read one, communications_archive_email/communications_trash_email to manage.
+- For communications: use communications_send for email or SMS (channel: email|sms). When the user asks to send an SMS or text, call communications_send immediately—do not ask for approval. Use communications_read to search emails, communications_get_email to read one, communications_archive_email/communications_trash_email to manage.
 - For reminders: use reminder_create when the user says "remind me" or "set a reminder". Use reminder_list to show pending reminders.
 - For TODOs: use todo_add when the user wants to add a task. Use todo_list, todo_complete, todo_remove as needed.
 - For wishlist: use wishlist_add for things they want but may never get (aspirational, e.g. 'Trip to Japan'). Use wishlist_list, wishlist_remove. Unlike TODOs, wishlist items have no due date or completion.
-- For circles: use circle_list, circle_create, circle_add_member to connect people, places, memories. Use contact_add, contact_list, place_add, place_list for contacts and places.
-
-**Approvals**
-- Write tools are intercepted; the system returns an approval message with an 8-character ID. The user replies APPROVE <that_id> to confirm."""
+- For circles: use circle_list, circle_create, circle_add_member to connect people, places, memories. Use contact_add, contact_list, place_add, place_list for contacts and places."""
 
 
 def _resolve_date_phrases(text: str, reference: datetime) -> tuple[str, str | None]:
@@ -113,8 +109,9 @@ def run_agent(
     openai_key: str,
     db_path: Path,
     chat_id: int,
+    **kwargs: Any,
 ) -> str:
-    """Process user message through OpenAI and return response or approval proposal."""
+    """Process user message through OpenAI and return response. Write tools execute directly."""
     _ensure_tools_loaded()
     client = OpenAI(api_key=openai_key)
     tools = get_openai_tools()
@@ -160,9 +157,8 @@ def run_agent(
         add_message(db_path, chat_id, "assistant", reply)
         return reply
 
-    # Handle tool calls
+    # Handle tool calls - execute all tools directly (no approval flow)
     results: list[dict[str, Any]] = []
-    approval_proposals: list[str] = []
 
     for tc in choice.message.tool_calls:
         name = tc.function.name
@@ -180,30 +176,17 @@ def run_agent(
             args["end"] = end_d.isoformat()
 
         # Inject chat_id for tools that need it
-        if name in ("reminder_create", "reminder_cancel", "todo_add", "todo_complete", "todo_remove", "wishlist_add", "wishlist_remove"):
+        if name in ("reminder_create", "reminder_cancel", "todo_add", "todo_complete", "todo_remove", "wishlist_add", "wishlist_remove", "wishlist_list", "reminder_list", "todo_list"):
             args["chat_id"] = chat_id
 
-        if is_write_tool(name):
-            preview = f"Tool: {name}\nArgs: {json.dumps(args, indent=2)}"
-            approval_id = create_approval(db_path, chat_id, name, args, preview, user_message)
-            approval_proposals.append(f"APPROVAL REQUIRED: {preview}\n\nReply: APPROVE {approval_id}")
-        else:
-            if name in ("reminder_list", "todo_list"):
-                args["chat_id"] = chat_id
-            result = execute_tool(name, args)
-            results.append({
-                "tool_call_id": tc.id,
-                "role": "tool",
-                "content": str(result),
-            })
+        result = execute_tool(name, args)
+        results.append({
+            "tool_call_id": tc.id,
+            "role": "tool",
+            "content": str(result),
+        })
 
-    if approval_proposals:
-        reply = "\n\n".join(approval_proposals)
-        add_message(db_path, chat_id, "user", user_message)
-        add_message(db_path, chat_id, "assistant", reply)
-        return reply
-
-    # Continue with tool results (read-only case)
+    # Continue with tool results
     messages.append({
         "role": "assistant",
         "content": choice.message.content or None,

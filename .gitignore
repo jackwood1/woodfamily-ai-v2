@@ -1,6 +1,7 @@
 __pycache__/
 *.pyc
 .env
+logs/
 .google_tokens.json
 .yahoo_tokens.json
 chroma_db/

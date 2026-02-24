@@ -13,8 +13,13 @@
 </head>
 <body>
   <header class="header">
-    <h1>Woody Dashboard</h1>
-    <p class="tagline">Events, decisions & notes</p>
+    <div class="header-top">
+      <div>
+        <h1>Woody Dashboard</h1>
+        <p class="tagline">Events, decisions & notes</p>
+      </div>
+      <div class="header-user" id="header-user"></div>
+    </div>
     <nav class="tabs" role="tablist">
       <button class="tab active" data-tab="overview" role="tab">Overview</button>
       <button class="tab" data-tab="people" role="tab">People</button>
@@ -30,21 +35,7 @@
         <h2>Chat</h2>
       </div>
       <p class="item-desc">Ask Woody to manage events, memories, circles, and more.</p>
-      <div class="pending-approvals" id="pending-approvals" hidden>
-        <div class="approvals-header">
-          <h3 class="approvals-heading">Pending approvals (expire in 24h)</h3>
-          <div class="approvals-batch">
-            <button class="btn btn-add btn-approve-all" id="btn-approve-all">Approve all</button>
-            <button class="btn btn-danger btn-reject-all" id="btn-reject-all">Reject all</button>
-          </div>
-        </div>
-        <ul class="list list-approvals" id="list-approvals"></ul>
-      </div>
       <div class="chat-messages" id="chat-messages"></div>
-      <div class="chat-approve" id="chat-approve" hidden>
-        <button class="btn btn-primary" id="btn-chat-approve">Approve</button>
-        <span id="chat-approve-id"></span>
-      </div>
       <form class="chat-form" id="form-chat">
         <input type="text" id="chat-input" placeholder="Type a message…" autocomplete="off">
         <button type="submit" class="btn btn-primary">Send</button>
@@ -208,21 +199,33 @@
       <ul class="list" id="list-decisions"></ul>
     </section>
 
-    <section class="panel notes-panel">
+    <section class="panel notes-todos-panel">
       <div class="panel-header">
-        <h2>Notes</h2>
-        <button class="btn btn-add" data-add="note">+ Add</button>
+        <h2>Notes & Todos</h2>
+        <div class="panel-header-actions">
+          <button type="button" class="btn btn-add" data-add="note" title="Add a note (reference info)">+ Note</button>
+          <button type="button" class="btn btn-add" data-add="todo" title="Add a task with optional due date">+ Todo</button>
+        </div>
       </div>
+      <p class="item-desc">Notes are reference info. Todos are tasks you can complete. Both appear in one list.</p>
       <form class="form add-form" id="form-note" hidden>
         <input type="text" name="title" placeholder="Title" required>
-        <textarea name="content" placeholder="Content" rows="4"></textarea>
+        <textarea name="content" placeholder="Content" rows="3"></textarea>
         <input type="text" name="tags" placeholder="Tags (comma-separated)">
         <div class="form-actions">
           <button type="submit" class="btn btn-primary">Save</button>
           <button type="button" class="btn btn-cancel" data-cancel="note">Cancel</button>
         </div>
       </form>
-      <ul class="list" id="list-notes"></ul>
+      <form class="form add-form" id="form-todo" hidden>
+        <input type="text" name="content" placeholder="Task (e.g. Buy groceries)" required>
+        <input type="date" name="due_date" placeholder="Due date (optional)">
+        <div class="form-actions">
+          <button type="submit" class="btn btn-primary">Add</button>
+          <button type="button" class="btn btn-cancel" data-cancel="todo">Cancel</button>
+        </div>
+      </form>
+      <ul class="list" id="list-notes-todos"></ul>
     </section>
 
     <section class="panel wishlist-panel">
@@ -270,8 +273,8 @@
         <div class="approvals-header">
           <h3 class="approvals-heading">Pending proposals</h3>
           <div class="approvals-batch">
-            <button class="btn btn-add btn-proposals-approve-all" id="btn-proposals-approve-all">Approve all</button>
-            <button class="btn btn-danger btn-proposals-reject-all" id="btn-proposals-reject-all">Reject all</button>
+            <button type="button" class="btn btn-add btn-proposals-approve-all" id="btn-proposals-approve-all">Approve all</button>
+            <button type="button" class="btn btn-danger btn-proposals-reject-all" id="btn-proposals-reject-all">Reject all</button>
           </div>
         </div>
         <ul class="list list-memory-agent" id="list-memory-agent"></ul>
@@ -306,7 +309,7 @@
       <div class="panel-header">
         <h2>Integrations</h2>
       </div>
-      <p class="item-desc">Connect Google for Gmail & Calendar, or Yahoo for Mail. COMMUNICATIONS agent scans inbox hourly.</p>
+      <p class="item-desc">Connect Google for Gmail & Calendar, Yahoo for Mail, or Twilio for SMS. COMMUNICATIONS agent scans inbox hourly.</p>
       <button id="btn-run-communications" class="btn btn-add" style="margin-bottom: 0.5rem;">Run Communications</button>
       <div id="google-status" class="integration-status">
         <span class="status-loading">Checking…</span>
@@ -316,6 +319,10 @@
         <span class="status-loading">Checking…</span>
       </div>
       <button id="btn-disconnect-yahoo" class="btn btn-danger" style="margin-top: 0.5rem; display: none;">Disconnect Yahoo</button>
+      <div id="sms-status" class="integration-status" style="margin-top: 1rem;">
+        <span class="status-loading">Checking…</span>
+      </div>
+      <p class="item-meta" style="margin-top: 0.25rem; font-size: 0.85rem;">SMS: Add TWILIO_* to .env. <a href="https://www.twilio.com/console" target="_blank" rel="noopener">Twilio Console</a> · See deploy/SMS-SETUP.md</p>
     </section>
 
     <section class="panel otel-panel">

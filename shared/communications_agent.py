@@ -10,10 +10,8 @@ import os
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-# Paths
-def _get_woody_db_path() -> Path:
-    default = Path(__file__).resolve().parent.parent / "woody" / "app.db"
-    return Path(os.environ.get("WOODY_DB_PATH", str(default)))
+# Paths - use shared module so Woody and dashboard always use same DB
+from shared.db_path import get_woody_db_path as _get_woody_db_path
 
 
 def _get_google_creds():
@@ -216,6 +214,11 @@ def send_sms(to: str, body: str) -> Dict[str, Any]:
     if not to_clean.startswith("+"):
         to_clean = "+1" + to_clean.replace("-", "").replace(" ", "").replace("(", "").replace(")", "")
     try:
+        import logging
+        import sys
+        logging.getLogger(__name__).info("[SMS] Sending to %s via Twilio", to_clean)
+        sys.stderr.write(f"[SMS] Sending to {to_clean} via Twilio\n")
+        sys.stderr.flush()
         from twilio.rest import Client
         client = Client(sid, token)
         msg = client.messages.create(body=body[:1600], from_=from_num, to=to_clean)

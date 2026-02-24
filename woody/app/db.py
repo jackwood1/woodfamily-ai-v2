@@ -157,7 +157,9 @@ CREATE INDEX IF NOT EXISTS idx_conv_chat ON conversation_messages(chat_id);
 
 
 def get_conn(db_path: Path) -> sqlite3.Connection:
-    return sqlite3.connect(str(db_path))
+    """Connect to DB. Always resolve to absolute path to avoid cwd-dependent behavior."""
+    resolved = Path(db_path).resolve()
+    return sqlite3.connect(str(resolved))
 
 
 def execute(
