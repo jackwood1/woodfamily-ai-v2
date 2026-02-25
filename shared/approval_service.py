@@ -259,7 +259,6 @@ def execute(
         from woody.app.tools import execute_tool
         from woody.app.conversation import add_message
         log.info("[APPROVAL] execute: running tool %s", rec["tool_name"])
-        import sys
         sys.stderr.write(f"[APPROVAL] execute: running tool {rec['tool_name']}\n")
         sys.stderr.flush()
         result = execute_tool(rec["tool_name"], args)
